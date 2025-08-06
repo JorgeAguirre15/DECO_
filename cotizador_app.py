@@ -8,12 +8,22 @@ from reportlab.pdfgen import canvas
 from io import BytesIO
 from datetime import datetime
 import base64
-
+import pandas as pd 
 # === Cargar productos ===
 @st.cache_data
 def cargar_productos():
     with open("productos.json", "r", encoding="utf-8") as f:
         return json.load(f)
+
+def guardar_productos(productos):
+    ruta = "productos.json"
+    try:
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(productos, f, indent=4, ensure_ascii=False)
+        print(f"✅ Guardado correctamente en {ruta}")
+    except Exception as e:
+        print(f"❌ Error al guardar: {e}")
+
 
 # === Factor de precio según plazo y monto ===
 def obtener_factor_precio(precio, plazo):
@@ -126,9 +136,14 @@ def generar_pdf(nombre_cliente, productos, resumen_tabla, resumen_consolidado, i
 # === Interfaz principal ===
 
 st.set_page_config(page_title="Cotizador Decohogar", layout="wide")
-st.title("🛒 Cotizador Decohogar")
 
 productos = cargar_productos()
+
+st.title("🛒 Cotizador Decohogar")
+
+# Mostrar tabla de productos seleccionados y multiplicadores por cada plazo
+
+
 nombres_productos = [p["name"] for p in productos]
 
 with st.sidebar:
@@ -142,16 +157,66 @@ with st.sidebar:
     precio_personalizado = st.number_input("Precio del producto ($)", min_value=0.0, step=10.0)
 
     if nombre_personalizado and precio_personalizado > 0:
+        nuevo_producto = {
+            "name": nombre_personalizado,
+            "price": precio_personalizado,
+            "image": ""  # Si más adelante quieres subir imagen, aquí la pones
+        }
+    
+        productos.append(nuevo_producto)
+        guardar_productos(productos)  # Aquí se guarda automáticamente 💾
+    
         productos_seleccionados.append(nombre_personalizado)
-        productos.append({"name": nombre_personalizado, "price": precio_personalizado, "image": ""})
         nombres_productos.append(nombre_personalizado)
+    
+        st.success(f"✅ Producto '{nombre_personalizado}' guardado exitosamente.")
+
 
     st.markdown("---")
     plazo_elegido = st.selectbox("Plazo elegido por el cliente (semanas)", [1, 4, 8, 12, 16])
     inicial = st.number_input("Inicial ($)", min_value=0.0, value=0.0, step=10.0)
     descuento = st.slider("Descuento aplicado (%)", 0, 100, 0)
 
-# === Cotización ===
+
+# === Tabla única de productos seleccionados y sus márgenes por plazo ===
+if productos_seleccionados:
+    st.subheader("📦 Margen de ganancia por plazo")
+
+    plazos_default = [1, 4, 8, 12, 16]
+    filas = []
+
+    for nombre in productos_seleccionados:
+        producto = next((p for p in productos if p["name"] == nombre), None)
+        if not producto:
+            continue
+
+        precio = producto.get("price", 0)
+
+        for plazo in plazos_default:
+            factor = obtener_factor_precio(precio, plazo)
+
+            if factor is not None and isinstance(factor, (int, float)):
+                margen = f"{(factor - 1) * 100:.0f}%"
+                filas.append({
+                    "Producto": nombre,
+                    "Costo": f"${precio:,.2f}",
+                    "Plazo (semanas)": plazo,
+                    "Margen (%)": margen
+                })
+
+    # Mostrar tabla solo si hay filas válidas
+    if filas:
+        try:
+            df_margenes = pd.DataFrame(filas)
+            st.dataframe(df_margenes, use_container_width=True)
+        except Exception as e:
+            st.error(f"❌ Error al crear la tabla: {e}")
+    else:
+        st.warning("⚠️ No se encontraron márgenes válidos para mostrar.")
+
+
+
+
 
 if productos_seleccionados:
     st.subheader("📌 Cotización con plazo elegido")
@@ -177,8 +242,6 @@ if productos_seleccionados:
 
         tabla_resultado.append({
             "Producto": nombre,
-            "Precio base": f"${precio:,.2f}",
-            "Con descuento": f"${precio_desc:,.2f}",
             "Valor total": f"${valor_total:,}",
             "Inicial": f"${aporte_inicial:,}",
             "Cuota semanal": f"${cuota:,}"
@@ -254,3 +317,4 @@ if productos_seleccionados:
 
 else:
     st.info("Selecciona productos desde la barra lateral para comenzar.")
+
